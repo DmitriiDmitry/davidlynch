@@ -1,0 +1,34 @@
+name: Daily Job
+
+on:
+  schedule:
+    - cron: '0 7 * * *'  # run every day at 07:00 UTC
+  workflow_dispatch:  # allows manual run
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set Up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install Reqs
+        run: pip install -r requirements.txt
+
+      - name: Set env variables
+        run: |
+          echo "WEATHER_API_KEY=${{ secrets.WEATHER_API_KEY }}" >> $GITHUB_ENV
+          echo "CITY=${{ secrets.CITY }}" >> $GITHUB_ENV
+          echo "UNITS=${{ secrets.UNITS }}" >> $GITHUB_ENV
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> $GITHUB_ENV
+          echo "TELEGRAM_CHAT_ID=${{ secrets.TELEGRAM_CHAT_ID }}" >> $GITHUB_ENV
+          echo "DAILY_POST_TIME=${{ secrets.DAILY_POST_TIME }}" >> $GITHUB_ENV
+
+      - name: Run main.py
+        run: python main.py
