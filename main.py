@@ -10,7 +10,6 @@ TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 WEATHER_API_KEY = os.environ.get('WEATHER_API_KEY')
 CITY = os.environ.get('CITY')
 UNITS = os.environ.get('UNITS', 'metric')
-DAILY_POST_TIME = os.environ.get('DAILY_POST_TIME', "08:00")
 
 
 def fetch_data(url, params):
@@ -43,7 +42,7 @@ def get_weather():
     try:
         weather_description = data['weather'][0]['description'].capitalize()
         temperature = data['main']['temp']
-        return (f"Here in {CITY} is {weather_description} this morning, "
+        return (f"Here in {CITY} {weather_description} morning, "
                 f"gentle breeze blowing, {temperature}°C")
     except (KeyError, IndexError) as e:
         return f"Incomplete weather data: {e}"
