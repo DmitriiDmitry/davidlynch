@@ -1,7 +1,0 @@
-    1: import pytest
-       
-       
-    2: @pytest.fixture(autouse=True)
-    2: def block_network_requests(monkeypatch: pytest.MonkeyPatch) -> None:
-           """Make every test fail instead of accidentally reaching the network."""
-   22:     monkeypatch.delattr("requests.sessions.Session.request")
