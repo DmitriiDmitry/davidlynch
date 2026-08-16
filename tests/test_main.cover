@@ -1,0 +1,271 @@
+    1: from datetime import datetime as real_datetime
+       
+    1: import pytest
+       
+    1: import main
+       
+       
+    2: class StubResponse:
+    1:     def __init__(self, status_code=200, json_data=None, text=""):
+    5:         self.status_code = status_code
+    5:         self._json_data = json_data
+    5:         self.text = text
+       
+    1:     def json(self):
+    3:         return self._json_data
+       
+       
+    2: class FixedDatetime(real_datetime):
+    2:     @classmethod
+    2:     def now(cls, tz=None):
+    8:         return cls(2025, 1, 17, 8, 30, tzinfo=tz)
+       
+       
+    3: @pytest.mark.parametrize(
+    1:     ("status_code", "payload", "expected"),
+    1:     [
+    1:         (200, {"value": 42}, ({"value": 42}, None)),
+    1:         (401, {"message": "Invalid API key"}, (None, "Invalid API key")),
+    1:         (500, {}, (None, "Unknown error")),
+           ],
+    1:     ids=["success", "api-error", "unknown-error"],
+       )
+    2: def test_fetch_data_handles_http_responses(monkeypatch, status_code, payload, expected):
+    3:     get_calls = []
+       
+    3:     def fake_get(url, params):
+    3:         get_calls.append((url, params))
+    3:         return StubResponse(status_code=status_code, json_data=payload)
+       
+    3:     monkeypatch.setattr(main.requests, "get", fake_get)
+       
+    3:     result = main.fetch_data("https://example.test", {"city": "Yerevan"})
+       
+    3:     assert result == expected
+    3:     assert get_calls == [("https://example.test", {"city": "Yerevan"})]
+       
+       
+    1: def test_fetch_data_returns_exception_text(monkeypatch):
+    1:     def fail_get(url, params):
+    1:         raise RuntimeError("network unavailable")
+       
+    1:     monkeypatch.setattr(main.requests, "get", fail_get)
+       
+    1:     assert main.fetch_data("https://example.test", {}) == (
+               None,
+               "network unavailable",
+           )
+       
+       
+    1: def test_get_weather_formats_api_data(monkeypatch):
+    1:     monkeypatch.setattr(main, "CITY", "Yerevan")
+    1:     monkeypatch.setattr(main, "WEATHER_API_KEY", "api-key")
+    1:     monkeypatch.setattr(main, "UNITS", "metric")
+    1:     fetch_calls = []
+       
+    1:     def fake_fetch(url, params):
+    1:         fetch_calls.append((url, params))
+    1:         return {"weather": [{"description": "clear sky"}], "main": {"temp": 18.5}}, None
+       
+    1:     monkeypatch.setattr(main, "fetch_data", fake_fetch)
+       
+    1:     result = main.get_weather()
+       
+    1:     assert result == "Here in Yerevan Clear sky morning, gentle breeze blowing, 18.5°C"
+    1:     assert fetch_calls == [
+    1:         (
+    1:             "https://api.openweathermap.org/data/2.5/weather",
+    1:             {"q": "Yerevan", "appid": "api-key", "units": "metric"},
+               )
+           ]
+       
+       
+    1: def test_get_weather_reports_fetch_error(monkeypatch):
+    2:     monkeypatch.setattr(main, "fetch_data", lambda url, params: (None, "timeout"))
+       
+    1:     assert main.get_weather() == "Error retrieving weather: timeout"
+       
+       
+    3: @pytest.mark.parametrize(
+    1:     "payload",
+    1:     [
+    1:         {},
+    1:         {"weather": []},
+    1:         {"weather": [{"description": "rain"}]},
+           ],
+    1:     ids=["missing-weather", "empty-weather", "missing-main"],
+       )
+    2: def test_get_weather_reports_incomplete_data(monkeypatch, payload):
+    6:     monkeypatch.setattr(main, "fetch_data", lambda url, params: (payload, None))
+       
+    3:     assert main.get_weather().startswith("Incomplete weather data:")
+       
+       
+    1: def test_find_afternoon_forecast_returns_matching_entry():
+    1:     morning = {"dt_txt": "2025-01-17 12:00:00", "main": {"temp": 10}}
+    1:     afternoon = {"dt_txt": "2025-01-17 15:00:00", "main": {"temp": 12}}
+    1:     next_day = {"dt_txt": "2025-01-18 15:00:00", "main": {"temp": 13}}
+       
+    5:     assert main.find_afternoon_forecast(
+    3:         [morning, afternoon, next_day], "2025-01-17"
+    1:     ) is afternoon
+    7:     assert (
+    5:         main.find_afternoon_forecast(
+    4:             [morning, afternoon, next_day], "2025-01-18", "12:00:00"
+               )
+    2:         is None
+           )
+       
+       
+    3: @pytest.mark.parametrize(
+    1:     ("data", "error", "expected"),
+    1:     [
+    1:         (None, "timeout", "Error retrieving forecast data: timeout"),
+    1:         ({}, None, "Error retrieving forecast data: No forecast list found"),
+           ],
+    1:     ids=["fetch-error", "missing-list"],
+       )
+    2: def test_get_afternoon_forecast_reports_api_or_payload_error(
+           monkeypatch, data, error, expected
+       ):
+    4:     monkeypatch.setattr(main, "fetch_data", lambda url, params: (data, error))
+       
+    2:     assert main.get_afternoon_forecast() == expected
+       
+       
+    3: @pytest.mark.parametrize(
+    1:     ("entries", "expected"),
+    1:     [
+    1:         (
+    1:             [{"dt_txt": "2025-01-17 15:00:00", "main": {"temp": 14}}],
+    1:             "This afternoon it will be going up to 14°C",
+               ),
+    1:         (
+    1:             [{"dt_txt": "2025-01-18 15:00:00", "main": {"temp": 11.5}}],
+    1:             "This afternoon it will be going up to 11.5°C",
+               ),
+    1:         ([], "Afternoon forecast not available."),
+    1:         (
+    1:             [{"dt_txt": "2025-01-17 15:00:00"}],
+    1:             "Afternoon forecast not available.",
+               ),
+           ],
+    1:     ids=["today", "tomorrow", "no-entries", "missing-main"],
+       )
+    2: def test_get_afternoon_forecast_selects_today_then_tomorrow(
+           monkeypatch, entries, expected
+       ):
+    4:     monkeypatch.setattr(main, "datetime", FixedDatetime)
+    8:     monkeypatch.setattr(main, "fetch_data", lambda url, params: ({"list": entries}, None))
+       
+    4:     assert main.get_afternoon_forecast() == expected
+       
+       
+    1: def test_send_telegram_message_skips_request_without_token(monkeypatch, capsys):
+    1:     monkeypatch.setattr(main, "TELEGRAM_BOT_TOKEN", None)
+       
+    1:     def unexpected_post(*args, **kwargs):
+               pytest.fail("requests.post must not be called without a bot token")
+       
+    1:     monkeypatch.setattr(main.requests, "post", unexpected_post)
+       
+    1:     assert main.send_telegram_message("hello") is None
+    1:     assert capsys.readouterr().out == "TELEGRAM_BOT_TOKEN is not set!\n"
+       
+       
+    3: @pytest.mark.parametrize(
+    1:     ("response", "expected_output"),
+    1:     [
+    1:         (StubResponse(200), "Bot token loaded successfully.\nMessage sent successfully!\n"),
+    1:         (
+    1:             StubResponse(400, text="Bad Request"),
+    1:             "Bot token loaded successfully.\nError sending message: Bad Request\n",
+               ),
+           ],
+    1:     ids=["success", "api-error"],
+       )
+    2: def test_send_telegram_message_posts_payload(
+           monkeypatch, capsys, response, expected_output
+       ):
+    2:     monkeypatch.setattr(main, "TELEGRAM_BOT_TOKEN", "secret-token")
+    2:     monkeypatch.setattr(main, "TELEGRAM_CHAT_ID", "12345")
+    2:     post_calls = []
+       
+    2:     def fake_post(url, data):
+    2:         post_calls.append((url, data))
+    2:         return response
+       
+    2:     monkeypatch.setattr(main.requests, "post", fake_post)
+       
+    2:     main.send_telegram_message("hello")
+       
+    2:     assert post_calls == [
+    2:         (
+    2:             "https://api.telegram.org/botsecret-token/sendMessage",
+    2:             {"chat_id": "12345", "text": "hello", "parse_mode": "HTML"},
+               )
+           ]
+    2:     assert capsys.readouterr().out == expected_output
+       
+       
+    1: def test_send_today_weather_sends_friday_sequence(monkeypatch):
+    1:     monkeypatch.setattr(main, "datetime", FixedDatetime)
+    2:     monkeypatch.setattr(main, "get_weather", lambda: "current weather")
+    2:     monkeypatch.setattr(main, "get_afternoon_forecast", lambda: "afternoon forecast")
+    1:     messages = []
+    1:     sleeps = []
+    1:     monkeypatch.setattr(main, "send_telegram_message", messages.append)
+    1:     monkeypatch.setattr(main.time, "sleep", sleeps.append)
+       
+    1:     main.send_today_weather()
+       
+    1:     assert messages == [
+               "Good morning",
+               "It's January 17, 2025\nand if YOU CAN BELIEVE IT - IT'S A FRIDAY ONCE AGAIN!!!",
+               "current weather",
+               "afternoon forecast",
+               "And it looks like we're going to be enjoying beautiful blue skies and golden sunshine all along the way!",
+               "Everyone, Have a great day!",
+           ]
+    1:     assert sleeps == [3, 3, 3, 3, 4, 2]
+       
+       
+    1: def test_send_today_weather_uses_regular_weekday_message(monkeypatch):
+    2:     class MondayDatetime(real_datetime):
+    2:         @classmethod
+    2:         def now(cls, tz=None):
+    1:             return cls(2025, 1, 20, 8, 30, tzinfo=tz)
+       
+    1:     monkeypatch.setattr(main, "datetime", MondayDatetime)
+    2:     monkeypatch.setattr(main, "get_weather", lambda: "weather")
+    2:     monkeypatch.setattr(main, "get_afternoon_forecast", lambda: "forecast")
+    1:     messages = []
+    1:     monkeypatch.setattr(main, "send_telegram_message", messages.append)
+    7:     monkeypatch.setattr(main.time, "sleep", lambda seconds: None)
+       
+    1:     main.send_today_weather()
+       
+    1:     assert messages[1] == "It's January 20, 2025 and it's a Monday"
+       
+       
+    1: def test_send_today_number_sends_script_and_random_number(monkeypatch):
+    1:     monkeypatch.setattr(main, "datetime", FixedDatetime)
+    2:     monkeypatch.setattr(main.random, "randint", lambda start, end: 7)
+    1:     messages = []
+    1:     sleeps = []
+    1:     monkeypatch.setattr(main, "send_telegram_message", messages.append)
+    1:     monkeypatch.setattr(main.time, "sleep", sleeps.append)
+       
+    1:     main.send_today_number()
+       
+    1:     assert messages == [
+               "Here we go for today's number!",
+               "It's January 17, 2025",
+               "Ten balls, each ball has a number",
+               "Numbers one through ten",
+               "Swirl the numbers",
+               "Pick a number!",
+               "Today's number is...",
+               "7!",
+           ]
+    1:     assert sleeps == [3, 3, 3, 3, 3, 3, 4, 2]
